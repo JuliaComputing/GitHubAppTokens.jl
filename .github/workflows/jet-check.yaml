@@ -22,5 +22,5 @@ jobs:
       - uses: actions/checkout@v6
       - name: "JET.jl test - custom filter"
         working-directory: ./
-        run: julia --project=. -t4 -e 'using Pkg; Pkg.instantiate(); Pkg.add("JET"); include("test/jet_test.jl"); println(readdir()); using GitHubAppTokens; test_jet(GitHubAppTokens)"
+        run: julia --project=. -t4 -e 'using Pkg; Pkg.instantiate(); Pkg.add("JET"); include("test/jet_test.jl"); println(readdir()); using GitHubAppTokens; test_jet(GitHubAppTokens)'
         shell: bash
