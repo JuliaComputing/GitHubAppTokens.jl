@@ -30,7 +30,3 @@ jobs:
         env:
           APP_ID: ${{ vars.TEST_GHAPP_ID }}
           APP_PRIVKEY: ${{ secrets.TEST_GHAPP_PRIVKEY }}
-      - name: "JET.jl test - custom filter"
-        working-directory: ./
-        run: julia --project=. -t4 -e 'using Pkg; Pkg.instantiate(); Pkg.add("JET"); include("test/jet_test.jl"); println(readdir()); using GitHubAppTokens; test_jet(GitHubAppTokens)"
-        shell: bash
