@@ -19,6 +19,7 @@ function JET.configured_reports(crf::CustomReportFilter, reports::Vector{JET.Inf
             "Random",
             "JSON",
             "Serialization",
+            "GitHub",
         )
 
         m = string(last(report.vst).linfo.def.module)
