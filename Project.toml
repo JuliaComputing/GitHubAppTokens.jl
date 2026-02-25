@@ -1,10 +1,10 @@
 name = "GitHubAppTokens"
 uuid = "065bf76e-ca52-408e-80ac-b2f947d0e344"
-version = "0.0.1"
-authors = "Nishanth H. Kottary <nishanth@juliahub.com>"
 keywords = ["github", "app", "token"]
 license = "MIT"
 desc = "Julia client access token fetcher for GitHub apps"
+authors = "Nishanth H. Kottary <nishanth@juliahub.com>"
+version = "0.0.1"
 
 [deps]
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
@@ -15,13 +15,6 @@ LRUCache = "8ac3fa9e-de4c-5943-b1dc-09c6b5f20637"
 Retry = "20febd7b-183b-5ae2-ac4a-720e7ce64774"
 
 [compat]
-Dates = "1.11.0"
-GitHub = "5.9.0"
-HTTP = "1"
-JSON = "0.21.4"
-LRUCache = "1.6.2"
-Retry = "0.4.1"
-Test = "1.11.0"
 julia = "1"
 
 [extras]
