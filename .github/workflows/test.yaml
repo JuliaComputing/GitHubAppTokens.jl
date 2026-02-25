@@ -15,9 +15,6 @@ on:
       - Project.toml
       - .github/workflows/test.yaml
   workflow_call:
-    vars:
-      TEST_GHAPP_ID:
-        required: true
     secrets:
       TEST_GHAPP_PRIVKEY:
         required: true
