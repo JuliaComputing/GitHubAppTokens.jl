@@ -1,0 +1,39 @@
+name: "GitHubAppTokens Test"
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - src/*
+      - test/*
+      - Project.toml
+      - .github/workflows/test.yaml
+  pull_request:
+    paths:
+      - src/*
+      - test/*
+      - Project.toml
+      - .github/workflows/test.yaml
+  workflow_call:
+    vars:
+      TEST_GHAPP_ID:
+        required: true
+    secrets:
+      TEST_GHAPP_PRIVKEY:
+        required: true
+
+jobs:
+  build-or-test:
+    runs-on: [self-hosted]
+    steps:
+      - uses: actions/checkout@v6
+      - name: "Test"
+        run: julia --color=yes --project=. -e 'using Pkg; Pkg.test("GitHubAppTokens")'
+        shell: bash
+        env:
+          APP_ID: ${{ vars.TEST_GHAPP_ID }}
+          APP_PRIVKEY: ${{ secrets.TEST_GHAPP_PRIVKEY }}
+      - name: "JET.jl test - custom filter"
+        working-directory: ./
+        run: julia --project=. -t4 -e "using Pkg; Pkg.instantiate(); Pkg.add(;name=\"JET\",version=\"v0"); include(\"test/jet_test.jl\"); Pkg.activate(\"GitHubAppTokens\"); using GitHubAppTokens; test_jet(GitHubAppTokens)"
+        shell: bash
