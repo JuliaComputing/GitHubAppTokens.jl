@@ -4,7 +4,7 @@ keywords = ["github", "app", "token"]
 license = "MIT"
 desc = "Julia client access token fetcher for GitHub apps"
 authors = "Nishanth H. Kottary <nishanth@juliahub.com>"
-version = "0.0.1"
+version = "0.0.2"
 
 [deps]
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
@@ -19,7 +19,7 @@ julia = "1.10"
 Dates = "1"
 GitHub = "5"
 HTTP = "1"
-JSON = "1"
+JSON = "0.21"
 LRUCache = "1"
 Retry = "0.4"
 
