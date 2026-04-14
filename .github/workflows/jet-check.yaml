@@ -17,9 +17,12 @@ on:
 
 jobs:
   build-or-test:
-    runs-on: [self-hosted]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: 1.12.6
       - name: "JET.jl test - custom filter"
         working-directory: ./
         run: julia --project=. -t4 -e 'using Pkg; Pkg.instantiate(); Pkg.add("JET"); include("test/jet_test.jl"); using GitHubAppTokens; test_jet(GitHubAppTokens)'
