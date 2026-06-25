@@ -90,12 +90,12 @@ function _get_repo_installation_id(
         @repeat 5 try
             inst_id = GitHub.installation(ctx.api, GitHub.Repo(repo_full_name), ctx.jwtauth).id
         catch ex
-            @delay_retry if isa(ex, HTTP.Exceptions.ConnectError)
+            @delay_retry if isa(ex, HTTP.ConnectError)
                 @debug("Error connecting to GitHub: ", ex)
             end
             @ignore if isa(ex, ErrorException) && occursin("Status Code: 404", ex.msg)
             end
-            if !isa(ex, HTTP.Exceptions.ConnectError) &&
+            if !isa(ex, HTTP.ConnectError) &&
                 !(isa(ex, ErrorException) && occursin("Status Code: 404", ex.msg))
                 rethrow(ex)
             end
@@ -127,12 +127,12 @@ function _get_token_for_installation(ctx::GHAppCtx, inst_id::Int)::Union{String,
                 ],
             )
         catch ex
-            @delay_retry if isa(ex, HTTP.Exceptions.ConnectError)
+            @delay_retry if isa(ex, HTTP.ConnectError)
                 @debug("Error connecting to GitHub: ", ex)
             end
             @ignore if isa(ex, ErrorException) && occursin("Status Code: 404", ex.msg)
             end
-            if !isa(ex, HTTP.Exceptions.ConnectError) &&
+            if !isa(ex, HTTP.ConnectError) &&
                 !(isa(ex, ErrorException) && occursin("Status Code: 404", ex.msg))
                 rethrow(ex)
             end
