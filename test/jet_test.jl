@@ -18,8 +18,13 @@ function JET.configured_reports(crf::CustomReportFilter, reports::Vector{JET.Inf
             "LRUCache",
             "Random",
             "JSON",
+            # JSON.jl 1.x parses through StructUtils; its generic `lift` fallbacks
+            # are flagged the same way JSON's own internals would be
+            "StructUtils",
             "Serialization",
             "GitHub",
+            # HTTP.jl 2.x's transport layer
+            "Reseau",
         )
 
         m = string(last(report.vst).linfo.def.module)

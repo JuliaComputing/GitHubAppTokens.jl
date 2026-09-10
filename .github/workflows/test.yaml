@@ -29,16 +29,28 @@ jobs:
           - '1.7'
           - '1'
           - 'nightly'
+        # both supported JSON.jl majors; the resolver alone would only ever pick one
+        json:
+          - '0.21'
+          - '1'
         os:
           - ubuntu-latest
+        exclude:
+          # JSON 1.x needs julia >= 1.10
+          - version: '1.7'
+            json: '1'
         include:
           - version: '1.7.2'
+            json: '0.21'
             os: 'ubuntu-latest'
     steps:
       - uses: actions/checkout@v6
       - uses: julia-actions/setup-julia@v2
         with:
           version: ${{ matrix.version }}
+      - name: "Pin JSON ${{ matrix.json }}"
+        run: julia --color=yes --project=. -e 'using Pkg; Pkg.add(PackageSpec(name="JSON", version="${{ matrix.json }}"))'
+        shell: bash
       - name: "Test"
         run: julia --color=yes --project=. -e 'using Pkg; Pkg.test("GitHubAppTokens")'
         shell: bash
