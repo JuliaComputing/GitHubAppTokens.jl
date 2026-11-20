@@ -15,9 +15,9 @@ LRUCache = "8ac3fa9e-de4c-5943-b1dc-09c6b5f20637"
 Retry = "20febd7b-183b-5ae2-ac4a-720e7ce64774"
 
 [compat]
-Dates = "0.9, 1"
+Dates = "0.0, 1"
 GitHub = "5"
-HTTP = "0.9, 2"
+HTTP = "0.9, 1, 2"
 JSON = "0.21, 1"
 LRUCache = "1"
 Retry = "0.4"
