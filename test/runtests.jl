@@ -4,6 +4,15 @@ using TimeZones
 using GitHubAppTokens
 using Dates
 
+@testset "Refresh margin" begin
+    t = DateTime(2026, 1, 1, 12, 0, 0)
+    @test GitHubAppTokens._expires_soon(t - Second(1), t)    # already expired
+    @test GitHubAppTokens._expires_soon(t + Second(30), t)   # less than a minute left
+    @test GitHubAppTokens._expires_soon(t + Second(59), t)
+    @test !GitHubAppTokens._expires_soon(t + Second(60), t)
+    @test !GitHubAppTokens._expires_soon(t + Minute(30), t)
+end
+
 mktemp() do path, _
     open(path, "w") do f
         write(f, ENV["APP_PRIVKEY"])
@@ -53,6 +62,19 @@ mktemp() do path, _
         ctx.installation_id_token_cache[inst_id] = exp_token
         newtoken = get_token_for_repo(ctx, "registratortestorg", "PrivateAnalysis.jl")
         @test token !== newtoken
+
+        # A token that is still valid but expires within the refresh margin is replaced too
+        expiring = GitHubAppTokens._GHToken(newtoken, now(Dates.UTC) + Second(30))
+        ctx.installation_id_token_cache[inst_id] = expiring
+        newtoken2 = get_token_for_repo(ctx, "registratortestorg", "PrivateAnalysis.jl")
+        @test newtoken2 !== newtoken
+        @test !GitHubAppTokens._expires_soon(ctx.installation_id_token_cache[inst_id].expires_at)
+
+        # Same for a JWT within the refresh margin of its expiry
+        # (compare iat, not the JWT string: a JWT minted within the same second is identical)
+        ctx.iat = now(Dates.UTC) - Minute(ctx.exp_mins) + Second(30)
+        GitHubAppTokens._refresh_jwt_if_needed!(ctx)
+        @test !GitHubAppTokens._expires_soon(ctx.iat + Minute(ctx.exp_mins))
 
         # _parse_github_url
         @test GitHubAppTokens._parse_github_url("https://github.com/JuliaLang/julia") ==

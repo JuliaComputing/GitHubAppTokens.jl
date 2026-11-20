@@ -59,10 +59,18 @@ function GHAppCtx(appid::Int, privkeypath::AbstractString, urlprefix::AbstractSt
     )
 end
 
+# Seconds before expiry at which a JWT or installation token is replaced.
+const _REFRESH_MARGIN = Dates.Second(60)
+
+# True when a credential expiring at `expires_at` has less than `_REFRESH_MARGIN`
+# left (or has already expired) at time `at`.
+_expires_soon(expires_at::DateTime, at::DateTime=now(Dates.UTC)) =
+    expires_at < at + _REFRESH_MARGIN
+
 function _refresh_jwt_if_needed!(ctx::GHAppCtx)::Nothing
     # Refresh if less than a minute is left for expiry of JWT
-    iat = now(Dates.UTC) - Dates.Second(60)
-    if (ctx.iat + Dates.Minute(ctx.exp_mins)) < iat
+    if _expires_soon(ctx.iat + Dates.Minute(ctx.exp_mins))
+        iat = now(Dates.UTC) - Dates.Second(60)
         ctx.jwtauth = GitHub.JWTAuth(ctx.appid, ctx.privkeypath; iat=iat, exp_mins=5)
         ctx.iat = iat
     end
@@ -111,7 +119,7 @@ end
 function _get_token_for_installation(ctx::GHAppCtx, inst_id::Int)::Union{String, Nothing}
     token = get(ctx.installation_id_token_cache, inst_id, nothing)
     # Refresh the access token if less than a minute is left for expiry
-    if token === nothing || token.expires_at < (now(Dates.UTC) - Second(60))
+    if token === nothing || _expires_soon(token.expires_at)
         _refresh_jwt_if_needed!(ctx)
         # Do not change the following to `resp = @repeat 5 try...` etc
         # `@repeat n try...` does not return inner values in the same way that
@@ -157,7 +165,7 @@ totally empty, get a list of installations and pick the first one, get the token
 function _get_any_token(ctx::GHAppCtx)::Union{String, Nothing}
     # Get all tokens from the cache that have not expired
     tokens = filter(
-        x -> x.expires_at >= (now(Dates.UTC) + Second(60)),
+        x -> !_expires_soon(x.expires_at),
         collect(values(ctx.installation_id_token_cache)),
     )
     if !isempty(tokens)
