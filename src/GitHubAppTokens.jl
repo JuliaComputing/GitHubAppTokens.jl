@@ -9,6 +9,9 @@ using JSON
 
 export GHAppCtx, get_token_for_repo
 
+# HTTP.ConnectError was introduced in HTTP v1.0; fall back to HTTP.IOError for v0.9
+const _HTTPConnectError = isdefined(HTTP, :ConnectError) ? HTTP.ConnectError : HTTP.IOError
+
 struct _GHToken
     token::String
     expires_at::DateTime
@@ -98,12 +101,12 @@ function _get_repo_installation_id(
         @repeat 5 try
             inst_id = GitHub.installation(ctx.api, GitHub.Repo(repo_full_name), ctx.jwtauth).id
         catch ex
-            @delay_retry if isa(ex, HTTP.ConnectError)
+            @delay_retry if isa(ex, _HTTPConnectError)
                 @debug("Error connecting to GitHub: ", ex)
             end
             @ignore if isa(ex, ErrorException) && occursin("Status Code: 404", ex.msg)
             end
-            if !isa(ex, HTTP.ConnectError) &&
+            if !isa(ex, _HTTPConnectError) &&
                 !(isa(ex, ErrorException) && occursin("Status Code: 404", ex.msg))
                 rethrow(ex)
             end
@@ -135,12 +138,12 @@ function _get_token_for_installation(ctx::GHAppCtx, inst_id::Int)::Union{String,
                 ],
             )
         catch ex
-            @delay_retry if isa(ex, HTTP.ConnectError)
+            @delay_retry if isa(ex, _HTTPConnectError)
                 @debug("Error connecting to GitHub: ", ex)
             end
             @ignore if isa(ex, ErrorException) && occursin("Status Code: 404", ex.msg)
             end
-            if !isa(ex, HTTP.ConnectError) &&
+            if !isa(ex, _HTTPConnectError) &&
                 !(isa(ex, ErrorException) && occursin("Status Code: 404", ex.msg))
                 rethrow(ex)
             end
