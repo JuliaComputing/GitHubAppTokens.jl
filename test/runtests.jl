@@ -70,7 +70,8 @@ mktemp() do path, _
         token3 = get_token_for_repo(ctx, "nkottary", "CookieTest.jl")
         @test token3 !== nothing
         @test token3 !== token
-        @test curr_jwt != ctx.jwtauth.JWT   # Check for refresh
+        # Check for refresh. Compare iat, not the JWT string: the JWT's claims are in
+        # whole seconds, so a JWT minted within the same second as `curr_jwt` is identical
         @test iat != ctx.iat
 
         # Expire the access token and see if you get a new one
