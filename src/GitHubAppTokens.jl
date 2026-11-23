@@ -6,11 +6,25 @@ using Retry
 using HTTP
 using Dates
 using JSON
+using Sockets
 
 export GHAppCtx, get_token_for_repo
 
-# HTTP.ConnectError was introduced in HTTP v1.0; fall back to HTTP.IOError for v0.9
-const _HTTPConnectError = isdefined(HTTP, :ConnectError) ? HTTP.ConnectError : HTTP.IOError
+# True for errors raised while connecting to GitHub, which are retried.
+@static if isdefined(HTTP, :ConnectError)
+    # HTTP >= 1.0 wraps DNS failures and connect timeouts in ConnectError, which is
+    # only raised before the request is sent.
+    _is_connect_error(ex) = isa(ex, HTTP.ConnectError)
+else
+    # HTTP 0.9 has no ConnectError. It only wraps errors passing `isioerror` in
+    # HTTP.IOError, and throws DNS errors and connect timeouts unwrapped.
+    # Note: HTTP.IOError on 0.9 also wraps read/write failures *after* the request
+    # was sent, and it can't be told apart from a connect failure (same message).
+    # So a dropped connection while reading the response is retried, which for
+    # `POST .../access_tokens` mints an extra installation token. That is harmless.
+    _is_connect_error(ex) = isa(ex, HTTP.IOError) || isa(ex, Sockets.DNSError) ||
+        isa(ex, HTTP.ConnectionPool.ConnectTimeout)
+end
 
 struct _GHToken
     token::String
@@ -101,12 +115,12 @@ function _get_repo_installation_id(
         @repeat 5 try
             inst_id = GitHub.installation(ctx.api, GitHub.Repo(repo_full_name), ctx.jwtauth).id
         catch ex
-            @delay_retry if isa(ex, _HTTPConnectError)
+            @delay_retry if _is_connect_error(ex)
                 @debug("Error connecting to GitHub: ", ex)
             end
             @ignore if isa(ex, ErrorException) && occursin("Status Code: 404", ex.msg)
             end
-            if !isa(ex, _HTTPConnectError) &&
+            if !_is_connect_error(ex) &&
                 !(isa(ex, ErrorException) && occursin("Status Code: 404", ex.msg))
                 rethrow(ex)
             end
@@ -138,12 +152,12 @@ function _get_token_for_installation(ctx::GHAppCtx, inst_id::Int)::Union{String,
                 ],
             )
         catch ex
-            @delay_retry if isa(ex, _HTTPConnectError)
+            @delay_retry if _is_connect_error(ex)
                 @debug("Error connecting to GitHub: ", ex)
             end
             @ignore if isa(ex, ErrorException) && occursin("Status Code: 404", ex.msg)
             end
-            if !isa(ex, _HTTPConnectError) &&
+            if !_is_connect_error(ex) &&
                 !(isa(ex, ErrorException) && occursin("Status Code: 404", ex.msg))
                 rethrow(ex)
             end
