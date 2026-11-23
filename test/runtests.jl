@@ -13,6 +13,22 @@ using Dates
     @test !GitHubAppTokens._expires_soon(t + Minute(30), t)
 end
 
+@testset "Connect errors are retryable" begin
+    HTTP = GitHubAppTokens.HTTP
+    err = try
+        HTTP.get("http://127.0.0.1:1/"; retry=false)
+    catch ex
+        ex
+    end
+    @test GitHubAppTokens._is_connect_error(err)
+    @test !GitHubAppTokens._is_connect_error(ErrorException("Status Code: 404"))
+    if !isdefined(HTTP, :ConnectError)
+        # HTTP 0.9 throws these unwrapped
+        @test GitHubAppTokens._is_connect_error(GitHubAppTokens.Sockets.DNSError("x", 0))
+        @test GitHubAppTokens._is_connect_error(HTTP.ConnectionPool.ConnectTimeout("x", "443"))
+    end
+end
+
 mktemp() do path, _
     open(path, "w") do f
         write(f, ENV["APP_PRIVKEY"])
@@ -75,6 +91,21 @@ mktemp() do path, _
         ctx.iat = now(Dates.UTC) - Minute(ctx.exp_mins) + Second(30)
         GitHubAppTokens._refresh_jwt_if_needed!(ctx)
         @test !GitHubAppTokens._expires_soon(ctx.iat + Minute(ctx.exp_mins))
+
+        # A nonexistent installation (404) returns nothing and drops any stale cached token
+        bogus_inst_id = 1
+        ctx.installation_id_token_cache[bogus_inst_id] =
+            GitHubAppTokens._GHToken("stale", now(Dates.UTC) - Hour(1))
+        @test GitHubAppTokens._get_token_for_installation(ctx, bogus_inst_id) === nothing
+        @test !haskey(ctx.installation_id_token_cache, bogus_inst_id)
+
+        # A repo whose cached installation is gone falls back to any token, and the
+        # stale installation ID is forgotten so the next call looks it up again
+        ctx.repo_installation_id_cache["registratortestorg/PrivateAnalysis.jl"] = bogus_inst_id
+        @test get_token_for_repo(ctx, "registratortestorg", "PrivateAnalysis.jl") !== nothing
+        @test !haskey(ctx.repo_installation_id_cache, "registratortestorg/PrivateAnalysis.jl")
+        @test get_token_for_repo(ctx, "registratortestorg", "PrivateAnalysis.jl") !== nothing
+        @test ctx.repo_installation_id_cache["registratortestorg/PrivateAnalysis.jl"] == inst_id
 
         # _parse_github_url
         @test GitHubAppTokens._parse_github_url("https://github.com/JuliaLang/julia") ==

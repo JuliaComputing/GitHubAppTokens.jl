@@ -133,6 +133,9 @@ function _get_repo_installation_id(
     return inst_id
 end
 
+# LRUCache.LRU throws KeyError from `delete!` on a missing key, unlike Dict
+_delete_if_present!(cache, key) = (haskey(cache, key) && delete!(cache, key); nothing)
+
 function _get_token_for_installation(ctx::GHAppCtx, inst_id::Int)::Union{String, Nothing}
     token = get(ctx.installation_id_token_cache, inst_id, nothing)
     # Refresh the access token if less than a minute is left for expiry
@@ -155,14 +158,19 @@ function _get_token_for_installation(ctx::GHAppCtx, inst_id::Int)::Union{String,
             @delay_retry if _is_connect_error(ex)
                 @debug("Error connecting to GitHub: ", ex)
             end
-            @ignore if isa(ex, ErrorException) && occursin("Status Code: 404", ex.msg)
+            # HTTP.post throws HTTP.StatusError on non-2xx responses (status_exception=true)
+            @ignore if isa(ex, HTTP.StatusError) && ex.status == 404
             end
-            if !_is_connect_error(ex) &&
-                !(isa(ex, ErrorException) && occursin("Status Code: 404", ex.msg))
+            if !_is_connect_error(ex) && !(isa(ex, HTTP.StatusError) && ex.status == 404)
                 rethrow(ex)
             end
         end
-        if resp !== nothing
+        if resp === nothing
+            # 404: the installation no longer exists (e.g. the app was uninstalled).
+            # Drop any stale cached token rather than returning it.
+            _delete_if_present!(ctx.installation_id_token_cache, inst_id)
+            return nothing
+        else
             j = JSON.parse(String(resp.body))
             token =
                 ctx.installation_id_token_cache[inst_id] = _GHToken(
@@ -245,7 +253,12 @@ function get_token_for_repo(
         return _get_any_token(ctx)
     end
     token = _get_token_for_installation(ctx, inst_id)
-    @assert token !== nothing
+    if token === nothing
+        # The cached installation is gone; forget it so the next call looks it up
+        # again, and fall back to any token as when the app is not installed.
+        _delete_if_present!(ctx.repo_installation_id_cache, repo_namespace * "/" * repo_name)
+        return _get_any_token(ctx)
+    end
     return token
 end
 
