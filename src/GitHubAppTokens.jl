@@ -133,8 +133,36 @@ function _get_repo_installation_id(
     return inst_id
 end
 
-# LRUCache.LRU throws KeyError from `delete!` on a missing key, unlike Dict
-_delete_if_present!(cache, key) = (haskey(cache, key) && delete!(cache, key); nothing)
+# LRUCache.LRU throws KeyError from `delete!` on a missing key, unlike Dict, and has no
+# `pop!(cache, key, default)`. Catch the KeyError rather than checking `haskey` first,
+# so two threads deleting the same key can't race.
+function _delete_if_present!(cache, key)
+    try
+        delete!(cache, key)
+    catch ex
+        isa(ex, KeyError) || rethrow(ex)
+    end
+    nothing
+end
+
+# LRU's `iterate` doesn't take the cache's lock (only get/setindex!/delete! do), so copy
+# the entries while holding it, to avoid racing a concurrent write or eviction.
+# `lock` is an internal field of LRUCache.LRU (a SpinLock in every 1.x release). A
+# SpinLock isn't reentrant, so call no other locking LRU method while holding it;
+# `collect` uses only `length` and `iterate`, which don't lock.
+_snapshot(cache) = lock(() -> collect(cache), cache.lock)
+
+# Forget a deleted installation: its cached token and every repo mapped to it.
+# One installation usually covers many repos (e.g. a whole org), so removing only
+# the requested repo's entry would leave other repos pointing at the dead id.
+function _forget_installation!(ctx::GHAppCtx, inst_id::Int)
+    _delete_if_present!(ctx.installation_id_token_cache, inst_id)
+    stale_repos = [repo for (repo, id) in _snapshot(ctx.repo_installation_id_cache) if id == inst_id]
+    for repo in stale_repos
+        _delete_if_present!(ctx.repo_installation_id_cache, repo)
+    end
+    nothing
+end
 
 function _get_token_for_installation(ctx::GHAppCtx, inst_id::Int)::Union{String, Nothing}
     token = get(ctx.installation_id_token_cache, inst_id, nothing)
@@ -167,8 +195,7 @@ function _get_token_for_installation(ctx::GHAppCtx, inst_id::Int)::Union{String,
         end
         if resp === nothing
             # 404: the installation no longer exists (e.g. the app was uninstalled).
-            # Drop any stale cached token rather than returning it.
-            _delete_if_present!(ctx.installation_id_token_cache, inst_id)
+            _forget_installation!(ctx, inst_id)
             return nothing
         else
             j = JSON.parse(String(resp.body))
@@ -191,27 +218,28 @@ function _get_any_token(ctx::GHAppCtx)::Union{String, Nothing}
     # Get all tokens from the cache that have not expired
     tokens = filter(
         x -> !_expires_soon(x.expires_at),
-        collect(values(ctx.installation_id_token_cache)),
+        [v for (_, v) in _snapshot(ctx.installation_id_token_cache)],
     )
     if !isempty(tokens)
         return first(tokens).token
     end
-    # If there were no un-expired tokens, then get an installation id
-    inst_ids = collect(values(ctx.repo_installation_id_cache))
-    if !isempty(inst_ids)
-        inst_id = first(inst_ids)
-        return _get_token_for_installation(ctx, inst_id)
+    # If there were no un-expired tokens, try the cached installation ids. An id
+    # whose installation was deleted returns `nothing` (and is forgotten), so move
+    # on to the next one.
+    for inst_id in unique([id for (_, id) in _snapshot(ctx.repo_installation_id_cache)])
+        token = _get_token_for_installation(ctx, inst_id)
+        token !== nothing && return token
     end
-    # If even the installation id cache was empty, get list of installation
-    # IDs from GitHub, get a token for the first one, cache that for future
-    inst_ids = GitHub.installations(ctx.api, ctx.jwtauth)[1]
-    # If the app was not installed anywhere, there isn't much we can do
-    if isempty(inst_ids)
-        @warn("Could not get any installations for GitHub app")
-        return nothing
+    # If no cached installation id worked, get the list of installations from
+    # GitHub and use the first one that gives a token
+    installations = GitHub.installations(ctx.api, ctx.jwtauth)[1]
+    for inst in installations
+        token = _get_token_for_installation(ctx, inst.id)
+        token !== nothing && return token
     end
-
-    return _get_token_for_installation(ctx, first(inst_ids).id)
+    # The app is not installed anywhere (or no installation gave a token)
+    @warn("Could not get a token from any installation of the GitHub app")
+    return nothing
 end
 
 """
@@ -254,9 +282,9 @@ function get_token_for_repo(
     end
     token = _get_token_for_installation(ctx, inst_id)
     if token === nothing
-        # The cached installation is gone; forget it so the next call looks it up
-        # again, and fall back to any token as when the app is not installed.
-        _delete_if_present!(ctx.repo_installation_id_cache, repo_namespace * "/" * repo_name)
+        # The cached installation is gone (and has been forgotten, so the next call
+        # looks the repo up again). Fall back to any token, as when the app is not
+        # installed on this repo.
         return _get_any_token(ctx)
     end
     return token

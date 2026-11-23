@@ -70,7 +70,8 @@ mktemp() do path, _
         token3 = get_token_for_repo(ctx, "nkottary", "CookieTest.jl")
         @test token3 !== nothing
         @test token3 !== token
-        @test curr_jwt != ctx.jwtauth.JWT   # Check for refresh
+        # Check for refresh. Compare iat, not the JWT string: the JWT's claims are in
+        # whole seconds, so a JWT minted within the same second as `curr_jwt` is identical
         @test iat != ctx.iat
 
         # Expire the access token and see if you get a new one
@@ -106,6 +107,35 @@ mktemp() do path, _
         @test !haskey(ctx.repo_installation_id_cache, "registratortestorg/PrivateAnalysis.jl")
         @test get_token_for_repo(ctx, "registratortestorg", "PrivateAnalysis.jl") !== nothing
         @test ctx.repo_installation_id_cache["registratortestorg/PrivateAnalysis.jl"] == inst_id
+
+        # A deleted installation usually covers many repos. With no unexpired tokens
+        # cached, a 404 forgets every repo mapped to it, and the fallback moves on to
+        # the next cached installation id (#9)
+        empty!(ctx.installation_id_token_cache)
+        ctx.repo_installation_id_cache["registratortestorg/DeadA.jl"] = bogus_inst_id
+        ctx.repo_installation_id_cache["registratortestorg/DeadB.jl"] = bogus_inst_id
+        GitHubAppTokens._set_token_not_applicable!(ctx, "registratortestorg", "NotInstalled.jl")
+        @test get_token_for_repo(ctx, "registratortestorg", "NotInstalled.jl") !== nothing
+        @test !(bogus_inst_id in values(ctx.repo_installation_id_cache))
+        @test ctx.repo_installation_id_cache["registratortestorg/PrivateAnalysis.jl"] == inst_id
+
+        # When every cached installation id is dead, fall through to the installations
+        # listed by GitHub
+        empty!(ctx.installation_id_token_cache)
+        empty!(ctx.repo_installation_id_cache)
+        ctx.repo_installation_id_cache["registratortestorg/DeadA.jl"] = bogus_inst_id
+        ctx.repo_installation_id_cache["registratortestorg/DeadB.jl"] = bogus_inst_id
+        @test get_token_for_repo(ctx, "registratortestorg", "NotInstalled.jl") !== nothing
+        @test !(bogus_inst_id in values(ctx.repo_installation_id_cache))
+
+        # _snapshot copies the entries under the cache's lock (and doesn't deadlock on it)
+        @test GitHubAppTokens._snapshot(ctx.repo_installation_id_cache) ==
+            collect(ctx.repo_installation_id_cache)
+        @test !islocked(ctx.repo_installation_id_cache.lock)
+
+        # Deleting a missing key is a no-op (LRU's delete! throws KeyError)
+        @test GitHubAppTokens._delete_if_present!(ctx.repo_installation_id_cache, "no/such") ===
+            nothing
 
         # _parse_github_url
         @test GitHubAppTokens._parse_github_url("https://github.com/JuliaLang/julia") ==
