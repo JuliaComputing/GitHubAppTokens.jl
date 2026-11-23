@@ -128,6 +128,11 @@ mktemp() do path, _
         @test get_token_for_repo(ctx, "registratortestorg", "NotInstalled.jl") !== nothing
         @test !(bogus_inst_id in values(ctx.repo_installation_id_cache))
 
+        # _snapshot copies the entries under the cache's lock (and doesn't deadlock on it)
+        @test GitHubAppTokens._snapshot(ctx.repo_installation_id_cache) ==
+            collect(ctx.repo_installation_id_cache)
+        @test !islocked(ctx.repo_installation_id_cache.lock)
+
         # Deleting a missing key is a no-op (LRU's delete! throws KeyError)
         @test GitHubAppTokens._delete_if_present!(ctx.repo_installation_id_cache, "no/such") ===
             nothing

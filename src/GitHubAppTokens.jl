@@ -145,12 +145,19 @@ function _delete_if_present!(cache, key)
     nothing
 end
 
+# LRU's `iterate` doesn't take the cache's lock (only get/setindex!/delete! do), so copy
+# the entries while holding it, to avoid racing a concurrent write or eviction.
+# `lock` is an internal field of LRUCache.LRU (a SpinLock in every 1.x release). A
+# SpinLock isn't reentrant, so call no other locking LRU method while holding it;
+# `collect` uses only `length` and `iterate`, which don't lock.
+_snapshot(cache) = lock(() -> collect(cache), cache.lock)
+
 # Forget a deleted installation: its cached token and every repo mapped to it.
 # One installation usually covers many repos (e.g. a whole org), so removing only
 # the requested repo's entry would leave other repos pointing at the dead id.
 function _forget_installation!(ctx::GHAppCtx, inst_id::Int)
     _delete_if_present!(ctx.installation_id_token_cache, inst_id)
-    stale_repos = [repo for (repo, id) in collect(ctx.repo_installation_id_cache) if id == inst_id]
+    stale_repos = [repo for (repo, id) in _snapshot(ctx.repo_installation_id_cache) if id == inst_id]
     for repo in stale_repos
         _delete_if_present!(ctx.repo_installation_id_cache, repo)
     end
@@ -211,7 +218,7 @@ function _get_any_token(ctx::GHAppCtx)::Union{String, Nothing}
     # Get all tokens from the cache that have not expired
     tokens = filter(
         x -> !_expires_soon(x.expires_at),
-        collect(values(ctx.installation_id_token_cache)),
+        [v for (_, v) in _snapshot(ctx.installation_id_token_cache)],
     )
     if !isempty(tokens)
         return first(tokens).token
@@ -219,7 +226,7 @@ function _get_any_token(ctx::GHAppCtx)::Union{String, Nothing}
     # If there were no un-expired tokens, try the cached installation ids. An id
     # whose installation was deleted returns `nothing` (and is forgotten), so move
     # on to the next one.
-    for inst_id in unique(collect(values(ctx.repo_installation_id_cache)))
+    for inst_id in unique([id for (_, id) in _snapshot(ctx.repo_installation_id_cache)])
         token = _get_token_for_installation(ctx, inst_id)
         token !== nothing && return token
     end
