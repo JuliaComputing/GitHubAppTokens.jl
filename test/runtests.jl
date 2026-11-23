@@ -107,6 +107,30 @@ mktemp() do path, _
         @test get_token_for_repo(ctx, "registratortestorg", "PrivateAnalysis.jl") !== nothing
         @test ctx.repo_installation_id_cache["registratortestorg/PrivateAnalysis.jl"] == inst_id
 
+        # A deleted installation usually covers many repos. With no unexpired tokens
+        # cached, a 404 forgets every repo mapped to it, and the fallback moves on to
+        # the next cached installation id (#9)
+        empty!(ctx.installation_id_token_cache)
+        ctx.repo_installation_id_cache["registratortestorg/DeadA.jl"] = bogus_inst_id
+        ctx.repo_installation_id_cache["registratortestorg/DeadB.jl"] = bogus_inst_id
+        GitHubAppTokens._set_token_not_applicable!(ctx, "registratortestorg", "NotInstalled.jl")
+        @test get_token_for_repo(ctx, "registratortestorg", "NotInstalled.jl") !== nothing
+        @test !(bogus_inst_id in values(ctx.repo_installation_id_cache))
+        @test ctx.repo_installation_id_cache["registratortestorg/PrivateAnalysis.jl"] == inst_id
+
+        # When every cached installation id is dead, fall through to the installations
+        # listed by GitHub
+        empty!(ctx.installation_id_token_cache)
+        empty!(ctx.repo_installation_id_cache)
+        ctx.repo_installation_id_cache["registratortestorg/DeadA.jl"] = bogus_inst_id
+        ctx.repo_installation_id_cache["registratortestorg/DeadB.jl"] = bogus_inst_id
+        @test get_token_for_repo(ctx, "registratortestorg", "NotInstalled.jl") !== nothing
+        @test !(bogus_inst_id in values(ctx.repo_installation_id_cache))
+
+        # Deleting a missing key is a no-op (LRU's delete! throws KeyError)
+        @test GitHubAppTokens._delete_if_present!(ctx.repo_installation_id_cache, "no/such") ===
+            nothing
+
         # _parse_github_url
         @test GitHubAppTokens._parse_github_url("https://github.com/JuliaLang/julia") ==
             ("JuliaLang", "julia")
