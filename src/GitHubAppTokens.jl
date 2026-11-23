@@ -6,8 +6,25 @@ using Retry
 using HTTP
 using Dates
 using JSON
+using Sockets
 
 export GHAppCtx, get_token_for_repo
+
+# True for errors raised while connecting to GitHub, which are retried.
+@static if isdefined(HTTP, :ConnectError)
+    # HTTP >= 1.0 wraps DNS failures and connect timeouts in ConnectError, which is
+    # only raised before the request is sent.
+    _is_connect_error(ex) = isa(ex, HTTP.ConnectError)
+else
+    # HTTP 0.9 has no ConnectError. It only wraps errors passing `isioerror` in
+    # HTTP.IOError, and throws DNS errors and connect timeouts unwrapped.
+    # Note: HTTP.IOError on 0.9 also wraps read/write failures *after* the request
+    # was sent, and it can't be told apart from a connect failure (same message).
+    # So a dropped connection while reading the response is retried, which for
+    # `POST .../access_tokens` mints an extra installation token. That is harmless.
+    _is_connect_error(ex) = isa(ex, HTTP.IOError) || isa(ex, Sockets.DNSError) ||
+        isa(ex, HTTP.ConnectionPool.ConnectTimeout)
+end
 
 struct _GHToken
     token::String
@@ -98,12 +115,12 @@ function _get_repo_installation_id(
         @repeat 5 try
             inst_id = GitHub.installation(ctx.api, GitHub.Repo(repo_full_name), ctx.jwtauth).id
         catch ex
-            @delay_retry if isa(ex, HTTP.ConnectError)
+            @delay_retry if _is_connect_error(ex)
                 @debug("Error connecting to GitHub: ", ex)
             end
             @ignore if isa(ex, ErrorException) && occursin("Status Code: 404", ex.msg)
             end
-            if !isa(ex, HTTP.ConnectError) &&
+            if !_is_connect_error(ex) &&
                 !(isa(ex, ErrorException) && occursin("Status Code: 404", ex.msg))
                 rethrow(ex)
             end
@@ -115,6 +132,9 @@ function _get_repo_installation_id(
 
     return inst_id
 end
+
+# LRUCache.LRU throws KeyError from `delete!` on a missing key, unlike Dict
+_delete_if_present!(cache, key) = (haskey(cache, key) && delete!(cache, key); nothing)
 
 function _get_token_for_installation(ctx::GHAppCtx, inst_id::Int)::Union{String, Nothing}
     token = get(ctx.installation_id_token_cache, inst_id, nothing)
@@ -135,17 +155,22 @@ function _get_token_for_installation(ctx::GHAppCtx, inst_id::Int)::Union{String,
                 ],
             )
         catch ex
-            @delay_retry if isa(ex, HTTP.ConnectError)
+            @delay_retry if _is_connect_error(ex)
                 @debug("Error connecting to GitHub: ", ex)
             end
-            @ignore if isa(ex, ErrorException) && occursin("Status Code: 404", ex.msg)
+            # HTTP.post throws HTTP.StatusError on non-2xx responses (status_exception=true)
+            @ignore if isa(ex, HTTP.StatusError) && ex.status == 404
             end
-            if !isa(ex, HTTP.ConnectError) &&
-                !(isa(ex, ErrorException) && occursin("Status Code: 404", ex.msg))
+            if !_is_connect_error(ex) && !(isa(ex, HTTP.StatusError) && ex.status == 404)
                 rethrow(ex)
             end
         end
-        if resp !== nothing
+        if resp === nothing
+            # 404: the installation no longer exists (e.g. the app was uninstalled).
+            # Drop any stale cached token rather than returning it.
+            _delete_if_present!(ctx.installation_id_token_cache, inst_id)
+            return nothing
+        else
             j = JSON.parse(String(resp.body))
             token =
                 ctx.installation_id_token_cache[inst_id] = _GHToken(
@@ -228,7 +253,12 @@ function get_token_for_repo(
         return _get_any_token(ctx)
     end
     token = _get_token_for_installation(ctx, inst_id)
-    @assert token !== nothing
+    if token === nothing
+        # The cached installation is gone; forget it so the next call looks it up
+        # again, and fall back to any token as when the app is not installed.
+        _delete_if_present!(ctx.repo_installation_id_cache, repo_namespace * "/" * repo_name)
+        return _get_any_token(ctx)
+    end
     return token
 end
 
